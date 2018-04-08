@@ -4,7 +4,10 @@
 /*
  * No matter how we store the data, we must redraw the visible buffer
  * each time a change is made. This is unavoidable. So the key is to
- * make those redrawings as fast as possible
+ * make those redrawings as fast as possible.
+ *
+ * 1. Insert node
+ * 2. Splay up node
  */
 
 
@@ -65,13 +68,28 @@ int is_split(unsigned long int offset, unsigned long int index, unsigned long in
         return 0;
 }
 
+unsigned long int node_size(struct Tree *node) {
+    if (node == NULL)
+        return 0; /* we don't consider strings of length 0 to be meaningful */
+    else
+        return node->size_left + node->size_right + node->piece->length;
+}
 
+unsigned long int node_offset(struct Tree *node) {
+    if (node == NULL)
+        return 0;
+    else
+        return node->size_left + node->piece->length;
+}
 
 struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *piece, unsigned long int index) {
     /* interative BST insert, which also returns the address to the newly inserted node,
      * or NULL if the insert failed. Note that the function will still return the head to
      * the unchanged tree. Now we pass the index as a parameter, because once we use it
-     * to sort the pieces, we don't need it anymore, and it's a waste to store. */
+     * to sort the pieces, we don't need it anymore, and it's a waste to store.
+     *
+     * TODO: fix sizes
+     */
 
     unsigned long int offset = 0;
 
@@ -86,28 +104,49 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
             if (index <= offset) { /* if index is equal, we make it left child, because it prepends the existing piece */
                 if (nodeptr->left != NULL) {
                     nodeptr = nodeptr->left;
-                    offset += nodeptr->left->size_left + nodeptr->left->piece->length;
+                    /* if we're going into the left branch, offset is NOT additive */
+                    offset = node_offset(nodeptr);
                     /* update offset only if child is not null */
                 }
                 else {
                     /* insert node as left child */
                     if (is_split(offset, index, nodeptr->piece->length)) {
                         /* Perform split. We know that the left child is definitely
-                         * null, so we insert the linked list on that side. */
+                         * null, so we insert the linked list on that side. To keep
+                         * the order correct, we insert like this:
+                         *
+                         *      last_half (nodeptr)
+                         *            /
+                         *        new_piece
+                         *          /
+                         *      first_half
+                         *
+                         * length_first = length_total - index_desired + index_current
+                         * length_last = length_total - length_first = index_desired - index_current
+                         */
 
                         /* 1. Save node's length, then update it */
-                        unsigned long int old_length = nodeptr->piece->length;
-                        nodeptr->piece->length = old_length - (index - offset);
+                        unsigned long int total_length = nodeptr->piece->length;
+                        /*unsigned long int last_half_length = offset - (index - 1);*/
+                        unsigned long int last_half_length = offset - index;
+                        nodeptr->piece->length = last_half_length;
 
                         /* 2. Insert new piece in the middle */
                         nodeptr->left = MakeNode(piece);
                         nodeptr->left->parent = nodeptr;
 
                         /* 3. Make a new piece to hold the last half of the split piece */
-                        struct Tree *last_half = MakeNode(MakePiece( nodeptr->piece->start + nodeptr->piece->length,
-                                                                     old_length - nodeptr->piece->length));
-                        nodeptr->left->left = last_half;
-                        last_half->parent = nodeptr->left->left;
+                        struct Tree *first_half = MakeNode(MakePiece( nodeptr->piece->start,
+                                                                      total_length - last_half_length));
+
+                        /* update last-half start index */
+                        nodeptr->piece->start = first_half->piece->start + first_half->piece->length + 1;
+                        nodeptr->left->left = first_half;
+                        first_half->parent = nodeptr->left;
+
+                        /* update subtree sizes */
+                        nodeptr->left->size_left = node_size(nodeptr->left->left);
+                        nodeptr->size_left = node_size(nodeptr->left);
 
                         *inserted = nodeptr->left;
 
@@ -123,28 +162,44 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
             if (index > offset) {
                 if (nodeptr->right != NULL) {
                     nodeptr = nodeptr->right;
-                    offset += nodeptr->right->size_left + nodeptr->right->piece->length;
+                    /* if we're going into the right subtree, offsets ARE additive */
+                    offset += node_offset(nodeptr);
                     /* update offset only if child is not null */
                 }
                 else {
                     /* insert node as right child */
                     if (is_split(offset, index, nodeptr->piece->length)) {
                         /* Perform split. We know that the right child is definitely
-                         * null, so we insert the linked list on that side. */
+                         * null, so we insert the linked list on that side. To keep
+                         * the order correct, we insert like this:
+                         *
+                         * first_half (nodeptr)
+                         *         \
+                         *     new_piece
+                         *          \
+                         *      last_half
+                         */
 
                         /* 1. Save node's length, then update it */
-                        unsigned long int old_length = nodeptr->piece->length;
-                        nodeptr->piece->length = old_length - (index - offset);
+                        unsigned long int total_length = nodeptr->piece->length;
+                        unsigned long int last_half_length = total_length - offset + index;
+
+                        nodeptr->piece->length -= last_half_length;
 
                         /* 2. Insert new piece in the middle */
                         nodeptr->right = MakeNode(piece);
                         nodeptr->right->parent = nodeptr;
 
                         /* 3. Make a new piece to hold the last half of the split piece */
-                        struct Tree *last_half = MakeNode(MakePiece( nodeptr->piece->start + nodeptr->piece->length,
-                                                                     old_length - nodeptr->piece->length));
-                        nodeptr->right->right = last_half;
-                        last_half->parent = nodeptr->right->right;
+                        struct Tree *last_half = MakeNode(MakePiece( nodeptr->piece->start + nodeptr->piece->length + 1,
+                                                                     last_half_length));
+
+                        nodeptr->right->right= last_half;
+                        last_half->parent = nodeptr->right;
+
+                        /* update subtree sizes */
+                        nodeptr->right->size_left = node_size(nodeptr->right->right);
+                        nodeptr->size_right = node_size(nodeptr->right);
 
                         *inserted = nodeptr->right;
 
@@ -189,11 +244,9 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, unsigned long 
 void PropogateOffset(struct Tree *tree) {
     while (tree->parent != NULL) {
         if (tree->parent->left == tree)
-            tree->parent->size_left = tree->piece->position->length
-                                          + tree->size_right + tree->size_left;
+            tree->parent->size_left = tree->piece->length + tree->size_right + tree->size_left;
         else
-            tree->parent->size_right = tree->piece->position->length
-                                           + tree->size_right + tree->size_left;
+            tree->parent->size_right = tree->piece->length + tree->size_right + tree->size_left;
         tree = tree->parent;
     }
 }
@@ -220,17 +273,16 @@ enum casetype ZigZigOrZigZag(struct Tree *tree) {
         return cerror;
 }
 
-int size(struct Tree *tree) {
-    if (tree == NULL)
-        return 0;
-    else
-        return tree->piece->position->length;
-}
 
 struct Tree *Splay(struct Tree *tree, struct Tree *node) {
     /* three cases: zig, zig-zig, zig-zag. We check
      * for these cases starting at the last inserted
-     * node, and move up the tree. */
+     * node, and move up the tree.
+     *
+     * TODO: remove index calculations
+     * TODO: update lengths and subtree sizes on rotation
+     * TODO: remove `PropogateOffset`
+     */
     while (node->parent != NULL) { /* tree is root, nothing to do */
         if (node->parent->parent == NULL) {
             /* must be zig case:
@@ -243,12 +295,14 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
              * */
             struct Tree *parent = node;
             struct Tree *child = node->parent;
-            int preserve_left = parent->size_left;
-            int preserve_right = parent->size_right;
+
             switch (ZigSide(node)) { /* we can collapse this into a child pointer array later */
                 case left:
-                    /* tree is the left subtree */
+                    /* tree is the left subtree. */
+
+                    /* 2 */
                     child->left = parent->right;
+                    child->size_left = node_size(child->left);
                     if (child->left != NULL)
                         child->left->parent = child;
 
@@ -256,27 +310,25 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
 
                     child->parent = parent;
                     parent->right = child;
+                    parent->size_right = node_size(parent->right);
 
-                    child->size_left = preserve_right;
-                    PropogateOffset(child);
                     break;
                 case right:
                     /* tree is the right subtree */
                     child->right = parent->left;
                     if (child->right != NULL)
-                        child->left->parent = child;
+                        child->right->parent = child;
+                    child->size_right = node_size(child->right);
 
                     parent->parent = child->parent;
 
                     child->parent = parent;
                     parent->left = child;
 
-                    child->size_right = preserve_left;
-
-                    PropogateOffset(child);
+                    parent->size_left = node_size(parent->left);
                     break;
                 case serror:
-                    printf("Error! Could not determine zig side: %d", node->piece->index);
+                    printf("Error! Could not determine zig side: %ld", node->size_left + node->piece->length);
                     break;
             }
             tree = parent;
@@ -287,8 +339,7 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
             struct Tree *child = node->parent;
             struct Tree *grandchild = node->parent->parent;
             struct Tree *link = grandchild->parent;
-            int preserve_left = parent->size_left;
-            int preserve_right = parent->size_right;
+
             /* we can assume the top three pointers are all NOT null
              * link MAY BE null */
             switch (ZigZigOrZigZag(node)) {
@@ -303,26 +354,28 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                      */
                     /* change grandchild pointers */
                     grandchild->left = child->right;
+                    grandchild->size_left = node_size(grandchild->left);
                     if (grandchild->left != NULL)
                         grandchild->left->parent = grandchild;
+
                     grandchild->parent = child;
 
                     /* change child pointers */
                     child->left = parent->right;
+                    child->size_left = node_size(child->left);
                     if (child->left != NULL)
                         child->left->parent = child;
                     child->right = grandchild;
+                    child->size_right = node_size(child->right);
 
                     /* change parent pointers */
                     parent->right = child;
+                    parent->size_right = node_size(parent->right);
+
                     child->parent = parent;
                     parent->parent = link;
                     if (parent->parent == NULL)
                         tree = parent;
-
-                    grandchild->size_left = preserve_left;
-                    grandchild->size_right = preserve_right;
-                    PropogateOffset(grandchild);
 
                     break;
                 case zigzagright:
@@ -336,15 +389,20 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                      */
                     /* 2 */
                     grandchild->left = parent->right;
+                    grandchild->size_left = node_size(grandchild->left);
                     if (grandchild->left != NULL)
                         grandchild->left->parent = grandchild;
+
                     /* 3 */
                     child->right = parent->left;
+                    child->size_right = node_size(child->right);
                     if (child->right != NULL)
                         child->right->parent = child;
 
                     parent->left = child;
                     parent->right = grandchild;
+                    parent->size_left = node_size(parent->left);
+                    parent->size_right = node_size(parent->right);
 
                     grandchild->parent = parent;
                     child->parent = parent;
@@ -353,11 +411,6 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                     if (parent->parent == NULL)
                         tree = parent;
 
-                    grandchild->size_left = size(grandchild->left);
-                    child->size_right = size(child->right);
-
-                    PropogateOffset(grandchild);
-                    PropogateOffset(child);
                     break;
                 case zigzigright:
                     /*   G               P
@@ -370,26 +423,29 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                      */
                     /* change grandchild pointers */
                     grandchild->right = child->left;
+                    grandchild->size_right = node_size(grandchild->right);
                     if (grandchild->right != NULL)
                         grandchild->right->parent = grandchild;
                     grandchild->parent = child;
 
                     /* change child pointers */
                     child->right = parent->left;
+                    child->size_right = node_size(child->right);
                     if (child->right != NULL)
                         child->right->parent = child;
+
                     child->left = grandchild;
+                    child->size_left = node_size(child->left);
 
                     /* change parent pointers */
                     parent->left = child;
+                    parent->size_left = node_size(parent->left);
+
                     child->parent = parent;
                     parent->parent = link;
                     if (parent->parent == NULL)
                         tree = parent;
 
-                    grandchild->size_left = preserve_left;
-                    grandchild->size_right = preserve_right;
-                    PropogateOffset(grandchild);
                     break;
                 case zigzagleft:
                     /*   G              P
@@ -404,18 +460,19 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                     grandchild->right = parent->left;
                     if (grandchild->right != NULL)
                         grandchild->right->parent = grandchild;
-
-                    grandchild->size_right = parent->size_left;
+                    grandchild->size_right = node_size(grandchild->right);
 
                     /* 3 */
                     child->left = parent->right;
                     if (child->left != NULL)
                         child->left->parent = child;
+                    child->size_left = node_size(child->left);
 
-                    child->size_left = parent->size_right;
 
                     parent->left = grandchild;
                     parent->right = child;
+                    parent->size_left = node_size(parent->left);
+                    parent->size_right = node_size(parent->right);
 
                     grandchild->parent = parent;
                     child->parent = parent;
@@ -424,16 +481,10 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                     if (parent->parent == NULL)
                         tree = parent;
 
-                    grandchild->size_right = size(grandchild->right);
-                    child->size_left = size(child->left);
-
-                    PropogateOffset(grandchild);
-                    PropogateOffset(child);
-
                     break;
                 case cerror:
-                    printf("Error! problem with splaying index %d\n", node->piece->index);
-                    break;
+                    printf("Error! problem with splaying index %ld\n", node->size_left + node->piece->length);
+                    return tree;
             }
         }
     }
@@ -444,16 +495,16 @@ int max(int a, int b) {
     return a > b ? a : b;
 }
 
-struct Tree *FixTree(struct Tree *tree, struct Tree *node) {
-    /* check if the newly inserted node
-     * overlaps with the parent node */
+/*struct Tree *FixTree(struct Tree *tree, struct Tree *node) {
+    *//* check if the newly inserted node
+     * overlaps with the parent node *//*
     if ( node == tree) return tree;
     if ( node->piece->index < ( node->parent->piece->index +
             node->parent->piece->position->length) ) {
 
-        /* keep track of n1's previous length */
+        *//* keep track of n1's previous length *//*
         int old_length = node->parent->piece->position->length;
-        /* truncate n1 */
+        *//* truncate n1 *//*
         node->parent->piece->position->length = node->piece->index - 1;
 
         int new_index = node->piece->index + node->piece->position->length + 1;
@@ -463,21 +514,21 @@ struct Tree *FixTree(struct Tree *tree, struct Tree *node) {
         NewNode->parent = node;
         node->right = NewNode;
 
-        /* propagate buffer offset */
+        *//* propagate buffer offset *//*
         PropogateOffset(NewNode);
 
         return tree;
     }
-}
+}*/
 
-struct Tree *Insert(struct Tree *tree, struct Piece *piece) {
+struct Tree *Insert(struct Tree *tree, struct Piece *piece, unsigned long int index) {
     struct Tree *inserted = NULL;
     unsigned long int offset = 0;
     /* perform normal bst insert */
-    tree = BSTInsert(tree, &inserted, &offset, piece);
+    tree = BSTInsert(tree, &inserted, piece, index);
 
     /* add new node if needed */
-    tree = FixTree(tree, inserted);
+    /*tree = FixTree(tree, inserted);*/
 
     /* splay up the node pointed to by inserted */
     tree = Splay(tree, inserted);
@@ -485,23 +536,28 @@ struct Tree *Insert(struct Tree *tree, struct Piece *piece) {
     return tree;
 }
 
-void TraverseInorder(struct Tree *tree) {
+void RecursiveInorder(struct Tree *tree, unsigned long int *offset) {
     if (tree == NULL)
         return;
-    TraverseInorder(tree->left);
-    printf("%d\t\t%d\t\t%d\t\t%d\t\t%d\n", tree->piece->index, tree->piece->position->start,
-           tree->piece->position->length, tree->size_left, tree->size_right);
-    TraverseInorder(tree->right);
+    RecursiveInorder(tree->left, offset);
+    printf("%ld\t\t%ld\t\t%ld\n", *offset, tree->piece->length, tree->piece->start);
+    *offset += tree->size_left + tree->piece->length;
+    RecursiveInorder(tree->right, offset);
+}
+
+void TraverseInorder(struct Tree *tree) {
+    unsigned long int *offset = 0;
+    RecursiveInorder(tree, &offset);
 }
 
 int main() {
     struct Tree *test = NULL;
 
-    test = Insert(test, MakePiece(0, 13));
-    test = Insert(test, MakePiece(10, 1));
-    test = Insert(test, MakePiece(5, 3));
+    test = Insert(test, MakePiece(0, 13), 0); /* string of length 13 @ index=0 */
+    test = Insert(test, MakePiece(0, 1), 10); /* string of length 1 @ index=10 */
+    test = Insert(test, MakePiece(0, 3), 5);  /* string of length 3 @ index=5 */
 
-    printf("index\tstart\tlength\n");
+    printf("offset\tlength\tstart\n");
     TraverseInorder(test);
 
     return 0;
