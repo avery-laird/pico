@@ -216,31 +216,6 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
     }
 }
 
-/*
-struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, unsigned long int *offset, struct Piece *piece) {
-
-    if (tree == NULL) {
-        tree = MakeNode(piece);
-        *inserted = tree;
-        return tree;
-    }
-
-    (*offset) += tree->piece->position->length + tree->size_left;
-
-    if (piece->index < *offset) {
-        tree->left = BSTInsert(tree->left, inserted, offset, piece);
-        tree->left->parent = tree;
-        tree->size_left += tree->left->piece->position->length;
-    }
-    if (piece->index > *offset) {
-        tree->right = BSTInsert(tree->right, inserted, offset, piece);
-        tree->right->parent = tree;
-        tree->size_right += tree->right->piece->position->length;
-    }
-    return tree;
-}
-*/
-
 void PropogateOffset(struct Tree *tree) {
     while (tree->parent != NULL) {
         if (tree->parent->left == tree)
@@ -277,12 +252,8 @@ enum casetype ZigZigOrZigZag(struct Tree *tree) {
 struct Tree *Splay(struct Tree *tree, struct Tree *node) {
     /* three cases: zig, zig-zig, zig-zag. We check
      * for these cases starting at the last inserted
-     * node, and move up the tree.
-     *
-     * TODO: remove index calculations
-     * TODO: update lengths and subtree sizes on rotation
-     * TODO: remove `PropogateOffset`
-     */
+     * node, and move up the tree. */
+
     while (node->parent != NULL) { /* tree is root, nothing to do */
         if (node->parent->parent == NULL) {
             /* must be zig case:
@@ -495,40 +466,11 @@ int max(int a, int b) {
     return a > b ? a : b;
 }
 
-/*struct Tree *FixTree(struct Tree *tree, struct Tree *node) {
-    *//* check if the newly inserted node
-     * overlaps with the parent node *//*
-    if ( node == tree) return tree;
-    if ( node->piece->index < ( node->parent->piece->index +
-            node->parent->piece->position->length) ) {
-
-        *//* keep track of n1's previous length *//*
-        int old_length = node->parent->piece->position->length;
-        *//* truncate n1 *//*
-        node->parent->piece->position->length = node->piece->index - 1;
-
-        int new_index = node->piece->index + node->piece->position->length + 1;
-        struct Tree *NewNode = MakeNode(MakePiece(new_index, old_length - (node->piece->index - 1)));
-        NewNode->piece->position->start = node->parent->piece->position->length + 1;
-
-        NewNode->parent = node;
-        node->right = NewNode;
-
-        *//* propagate buffer offset *//*
-        PropogateOffset(NewNode);
-
-        return tree;
-    }
-}*/
-
 struct Tree *Insert(struct Tree *tree, struct Piece *piece, unsigned long int index) {
     struct Tree *inserted = NULL;
     unsigned long int offset = 0;
     /* perform normal bst insert */
     tree = BSTInsert(tree, &inserted, piece, index);
-
-    /* add new node if needed */
-    /*tree = FixTree(tree, inserted);*/
 
     /* splay up the node pointed to by inserted */
     tree = Splay(tree, inserted);
@@ -541,13 +483,14 @@ void RecursiveInorder(struct Tree *tree, unsigned long int *offset) {
         return;
     RecursiveInorder(tree->left, offset);
     printf("%ld\t\t%ld\t\t%ld\n", *offset, tree->piece->length, tree->piece->start);
-    *offset += tree->size_left + tree->piece->length;
+    *offset += tree->piece->length;
     RecursiveInorder(tree->right, offset);
 }
 
 void TraverseInorder(struct Tree *tree) {
-    unsigned long int *offset = 0;
+    unsigned long int offset = 0;
     RecursiveInorder(tree, &offset);
+    printf("%ld\n", offset);
 }
 
 int main() {
