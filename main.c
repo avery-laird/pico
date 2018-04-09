@@ -61,8 +61,12 @@ struct Tree *MakeNode(struct Piece *piece) {
 
 int is_split(unsigned long int offset, unsigned long int index, unsigned long int parent_length) {
     /* takes offset and index of node to be inserted, returns 1
-     * if a split is needed, 0 otherwise */
-    if (index > offset || index < offset + parent_length )
+     * if a split is needed, 0 otherwise. */
+    unsigned long int relative_left_bound = offset - parent_length;
+    unsigned long int relative_right_bound = parent_length;
+    unsigned long int relative_index = index - relative_left_bound;
+    /*if ((offset - parent_length) < (index - (offset-parent_length)) && (index - (offset-parent_length)) < (offset + parent_length))*/
+    if (relative_left_bound < relative_index && relative_index < relative_right_bound)
         return 1;
     else
         return 0;
@@ -155,6 +159,7 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
                         /* insert node normally */
                         nodeptr->left = MakeNode(piece);
                         nodeptr->left->parent = nodeptr;
+                        *inserted = nodeptr->left;
                         return tree;
                     }
                 }
@@ -208,6 +213,7 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
                         /* insert node normally */
                         nodeptr->right = MakeNode(piece);
                         nodeptr->right->parent = nodeptr;
+                        *inserted = nodeptr->right;
                         return tree;
                     }
                 }
@@ -494,14 +500,40 @@ void TraverseInorder(struct Tree *tree) {
 }
 
 int main() {
+    printf("offset\tlength\tstart\n");
+
     struct Tree *test = NULL;
 
     test = Insert(test, MakePiece(0, 13), 0); /* string of length 13 @ index=0 */
     test = Insert(test, MakePiece(0, 1), 10); /* string of length 1 @ index=10 */
     test = Insert(test, MakePiece(0, 3), 5);  /* string of length 3 @ index=5 */
 
-    printf("offset\tlength\tstart\n");
+    printf("TEST\n");
     TraverseInorder(test);
+
+    printf("PREPEND\n");
+    struct Tree *prepend = NULL;
+    prepend = Insert(prepend, MakePiece(0, 5), 0);
+    prepend = Insert(prepend, MakePiece(0, 4), 0);
+    TraverseInorder(prepend);
+
+    printf("APPEND\n");
+    struct Tree *append = NULL;
+    append = Insert(append, MakePiece(0, 5), 0);
+    append = Insert(append, MakePiece(0, 4), 6);
+    TraverseInorder(append);
+
+    printf("SPLIT - insert right\n");
+    struct Tree *split_right = NULL;
+    split_right = Insert(split_right, MakePiece(0, 5), 0);
+    split_right = Insert(split_right, MakePiece(0, 4), 3);
+    TraverseInorder(split_right);
+
+    printf("SPLIT - insert left\n");
+    struct Tree *split_left = NULL;
+    split_left = Insert(split_left, MakePiece(0, 5), 0);
+    split_left = Insert(split_left, MakePiece(0, 4), 3);
+    TraverseInorder(split_left);
 
     return 0;
 }
