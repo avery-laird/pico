@@ -1,5 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h>
+#include "ValidateTree.h"
+#include "types.h"
+
+#define DEBUG
+#define MSG_LEN 250
+#define LOG_TARGET stdout
 
 /*
  * No matter how we store the data, we must redraw the visible buffer
@@ -8,12 +18,145 @@
  *
  * 1. Insert node
  * 2. Splay up node
+ *
+ * TODO: bug when inserting one character piece at the same place as another piece. Example: 0, 1, 2, 3, insert @ 0
+ *
+ *
  */
 
 
-typedef struct Piece {
-    unsigned long int start, length;
+Logger *InitLogger() {
+    Logger *l = malloc(sizeof(Logger));
+    l->top = NULL;
+    return l;
 };
+
+void Log(Logger *L, int level, char *msg, ...) {
+    va_list args;
+
+    va_start(args, msg);
+
+    struct Message *M = malloc(sizeof(struct Message));
+    M->msg = malloc(sizeof(char)*MSG_LEN);
+    vsprintf(M->msg, msg, args);
+    va_end(args);
+    M->level = level;
+
+    MessageWrapper *w = malloc(sizeof(MessageWrapper));
+    w->m = M;
+    w->next = NULL;
+
+    MessageWrapper *p = L->top;
+    if (p == NULL) L->top = w;
+    else {
+        while (p->next != NULL)
+            p = p->next;
+        p->next = w;
+    }
+}
+
+void PrintLog(Logger *L) {
+    MessageWrapper *p = L->top;
+
+    if (p == NULL) return;
+
+    for (struct Message *M; p != NULL; p = p->next) {
+        M = p->m;
+        switch (M->level) {
+            case 1:
+                printf("DEBUG: ");
+                break;
+            case 2:
+                printf("WARNING: ");
+                break;
+            case 3:
+                printf("ERROR: ");
+                break;
+            default:
+                printf("Code %d: ", M->level);
+                break;
+        }
+        fprintf(LOG_TARGET, M->msg);
+        fprintf(LOG_TARGET, "\n");
+    }
+}
+
+void ClearLog(Logger *L) {
+    MessageWrapper *p = L->top;
+
+    if (p == NULL) return;
+
+    for (MessageWrapper *w = p; p != NULL; w = p) {
+        p = p->next;
+
+        free(w->m);
+        w->m = NULL;
+
+        free(w);
+        w = NULL;
+    }
+    L->top = NULL;
+}
+
+
+static Logger *L;
+
+struct Queue {
+    int front, back, capacity, size;
+    struct Tree **tree;
+};
+
+struct Queue *MakeQueue(int capacity) {
+    struct Queue *q = malloc(sizeof(struct Queue));
+    q->tree = malloc(sizeof(struct Tree)*capacity);
+    q->back = q->size = 0;
+    q->front = -1;
+    q->capacity = capacity;
+    return q;
+}
+
+void enqueue(struct Queue *q, struct Tree *node) {
+    if (q->size == q->capacity) {
+        Log(L, 2, "queue is full");
+    } else {
+        if (q->front == q->capacity)
+            q->front = 0;
+        else
+            q->front++;
+        q->tree[q->front] = node;
+        q->size++;
+    }
+}
+
+struct Tree *dequeue(struct Queue *q) {
+    if (q->size == 0) {
+        Log(L, 2, "queue is empty");
+
+    } else {
+        struct Tree *ret = q->tree[q->back];
+        if (q->back == q->capacity)
+            q->back = 0;
+        else
+            q->back++;
+        q->size--;
+        return ret;
+    }
+}
+
+void PrintTree(struct Tree *t) {
+    struct Queue *q = MakeQueue(1000);
+    enqueue(q, t);
+    struct Tree *tmp;
+    struct Tree *last = NULL;
+    while (q->size > 0) {
+        tmp = dequeue(q);
+        if (tmp == last) printf("\n");
+
+        printf("(%ld, %ld, %ld, %ld) ", tmp->piece->start, tmp->piece->length, tmp->size_left, tmp->size_right);
+        if (tmp->left != NULL) enqueue(q, tmp->left); last = tmp->left;
+        if (tmp->right != NULL) enqueue(q, tmp->right); last = tmp->right;
+    }
+}
 
 struct Piece *MakePiece(unsigned long int start, unsigned long int length) {
     struct Piece *NewPiece = malloc(sizeof(NewPiece));
@@ -22,32 +165,6 @@ struct Piece *MakePiece(unsigned long int start, unsigned long int length) {
     return NewPiece;
 }
 
-/* List of pieces */
-struct Block {
-    struct Piece *next;
-};
-
-/*
- * Store the pieces in a splay tree
- *
- * the key of the node is Tree->piece->index
- */
-
-enum side {
-    left, right, parent, serror
-};
-
-enum casetype {
-    zigzigleft, zigzigright,
-    zigzagleft, zigzagright,
-    cerror
-};
-
-struct Tree {
-    struct Piece *piece;
-    struct Tree *left, *right, *parent;
-    unsigned long int size_left, size_right;
-};
 
 struct Tree *MakeNode(struct Piece *piece) {
     /* takes piece, returns node that points to piece */
@@ -159,6 +276,7 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
                         /* insert node normally */
                         nodeptr->left = MakeNode(piece);
                         nodeptr->left->parent = nodeptr;
+                        nodeptr->size_left = node_size(nodeptr->left);
                         *inserted = nodeptr->left;
                         return tree;
                     }
@@ -213,6 +331,7 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
                         /* insert node normally */
                         nodeptr->right = MakeNode(piece);
                         nodeptr->right->parent = nodeptr;
+                        nodeptr->size_right = node_size(nodeptr->right);
                         *inserted = nodeptr->right;
                         return tree;
                     }
@@ -222,15 +341,6 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
     }
 }
 
-void PropogateOffset(struct Tree *tree) {
-    while (tree->parent != NULL) {
-        if (tree->parent->left == tree)
-            tree->parent->size_left = tree->piece->length + tree->size_right + tree->size_left;
-        else
-            tree->parent->size_right = tree->piece->length + tree->size_right + tree->size_left;
-        tree = tree->parent;
-    }
-}
 
 enum side ZigSide(struct Tree *tree) {
     if (tree->parent->right == tree)
@@ -250,8 +360,12 @@ enum casetype ZigZigOrZigZag(struct Tree *tree) {
         return zigzagleft;
     if (tree->parent->right == tree && tree->parent->parent->left == tree->parent)
         return zigzagright;
-    else
+    else {
+#ifdef DEBUG
+        Log(L, 3, "couldn't determine case of zig-zig left/right or zig-zag left/right");
+#endif
         return cerror;
+    }
 }
 
 
@@ -272,6 +386,7 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
              * */
             struct Tree *parent = node;
             struct Tree *child = node->parent;
+            struct Message *m;
 
             switch (ZigSide(node)) { /* we can collapse this into a child pointer array later */
                 case left:
@@ -303,10 +418,12 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                     parent->left = child;
 
                     parent->size_left = node_size(parent->left);
+
                     break;
                 case serror:
-                    printf("Error! Could not determine zig side: %ld", node->size_left + node->piece->length);
-                    break;
+                default:
+                    Log(L, 3, "could not determine zig side");
+                    return tree;
             }
             tree = parent;
         }
@@ -316,6 +433,23 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
             struct Tree *child = node->parent;
             struct Tree *grandchild = node->parent->parent;
             struct Tree *link = grandchild->parent;
+            struct Message *m;
+
+            /* determine side of subtree to link back to main tree after splay */
+            enum side link_side = serror;
+            if (link == NULL) {
+                link_side = null;
+            }
+            else {
+                if (link->left != NULL) {
+                    if (link->left == grandchild) link_side = left;
+                }
+                if (link->right != NULL) {
+                    if (link->right == grandchild) link_side = right;
+                }
+            }
+            if (link_side == serror)
+                Log(L, 3, "couldn't determine link side");
 
             /* we can assume the top three pointers are all NOT null
              * link MAY BE null */
@@ -351,8 +485,20 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
 
                     child->parent = parent;
                     parent->parent = link;
-                    if (parent->parent == NULL)
-                        tree = parent;
+                    switch (link_side) {
+                        case null:
+                            tree = parent;
+                            break;
+                        case left:
+                            link->left = parent;
+                            break;
+                        case right:
+                            link->right = parent;
+                            break;
+                        default:
+                            Log(L, 3, "could not link subtree to rest of tree");
+                            break;
+                    }
 
                     break;
                 case zigzagright:
@@ -385,9 +531,21 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                     child->parent = parent;
                     parent->parent = link;
 
-                    if (parent->parent == NULL)
-                        tree = parent;
+                    switch (link_side) {
+                        case null:
+                            tree = parent;
+                            break;
+                        case left:
+                            link->left = parent;
+                            break;
+                        case right:
+                            link->right = parent;
+                            break;
+                        default:
+                            Log(L, 3, "could not link subtree to rest of tree");
 
+                            break;
+                    }
                     break;
                 case zigzigright:
                     /*   G               P
@@ -420,8 +578,22 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
 
                     child->parent = parent;
                     parent->parent = link;
-                    if (parent->parent == NULL)
-                        tree = parent;
+
+                    switch (link_side) {
+                        case null:
+                            tree = parent;
+                            break;
+                        case left:
+                            link->left = parent;
+                            break;
+                        case right:
+                            link->right = parent;
+                            break;
+                        default:
+                            Log(L, 3, "could not link subtree to rest of tree");
+
+                            break;
+                    }
 
                     break;
                 case zigzagleft:
@@ -455,12 +627,25 @@ struct Tree *Splay(struct Tree *tree, struct Tree *node) {
                     child->parent = parent;
                     parent->parent = link;
 
-                    if (parent->parent == NULL)
-                        tree = parent;
+                    switch (link_side) {
+                        case null:
+                            tree = parent;
+                            break;
+                        case left:
+                            link->left = parent;
+                            break;
+                        case right:
+                            link->right = parent;
+                            break;
+                        default:
+                            Log(L, 3, "could not link subtree to rest of tree");
 
+                            break;
+                    }
                     break;
                 case cerror:
-                    printf("Error! problem with splaying index %ld\n", node->size_left + node->piece->length);
+                    Log(L, 3, "problem with splaying index %ld\n", node->size_left + node->piece->length);
+
                     return tree;
             }
         }
@@ -477,9 +662,26 @@ struct Tree *Insert(struct Tree *tree, struct Piece *piece, unsigned long int in
     unsigned long int offset = 0;
     /* perform normal bst insert */
     tree = BSTInsert(tree, &inserted, piece, index);
-
+#ifdef DEBUG
+    if (!NodesAreConnected(tree))
+        Log(L, 3, "Broken tree!");
+    if (L->top != NULL) {
+        Log(L, 3, "issues during BSTInsert: index %ld", index);
+        PrintLog(L);
+        ClearLog(L);
+    }
+#endif
     /* splay up the node pointed to by inserted */
     tree = Splay(tree, inserted);
+#ifdef DEBUG
+    if (!NodesAreConnected(tree))
+        Log(L, 3, "Broken tree!");
+    if (L->top != NULL) {
+        Log(L, 3, "issues during splay: index %ld", index);
+        PrintLog(L);
+        ClearLog(L);
+    }
+#endif
 
     return tree;
 }
@@ -500,6 +702,8 @@ void TraverseInorder(struct Tree *tree) {
 }
 
 int main() {
+    L = InitLogger();
+
     printf("offset\tlength\tstart\n");
 
     struct Tree *test = NULL;
@@ -535,5 +739,32 @@ int main() {
     split_left = Insert(split_left, MakePiece(0, 4), 3);
     TraverseInorder(split_left);
 
+    struct Tree *profile = NULL;
+    clock_t start, end;
+    double total = 0, diff;
+
+    unsigned long int target;
+
+    srand(time(NULL));
+
+    unsigned long test1[] = {0, 1, 2, 3, 0, 1, 2, 3, 1, 2, 2};
+    unsigned long current_max = 0;
+
+#define RANGE 700
+    for (unsigned long int i=0; i<RANGE; i++) {
+
+        target = (unsigned long) (rand() % (current_max - 0 + 1));
+
+        printf("insert @ %ld\n", target);
+        start = clock();
+        profile = Insert(profile, MakePiece(0, 1), target);
+        end = clock();
+
+        current_max = target + 1 > current_max ? target + 1 : current_max;
+        diff = ((double)(end-start))/CLOCKS_PER_SEC;
+        total += diff;
+    }
+
+    printf("%f\n", total/RANGE);
     return 0;
 }

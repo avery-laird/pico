@@ -3,4 +3,6 @@ project(PieceTable C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_executable(PieceTable main.c)
+add_executable(PieceTable main.c ValidateTree.c ValidateTree.h types.h)
+
+add_executable(Tests Tests.c)
