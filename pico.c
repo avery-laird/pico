@@ -69,30 +69,4 @@ int main() {
             }
         }
     }
-
-    /*int start;
-
-    start = 0;
-    tree = Insert(tree, MakePiece("This is a test\n", 15), 0);
-    PrintS(tree, buffer, &start);
-    printf(buffer);
-
-    start = 0;
-    char buffer2[200];
-    tree = Insert(tree, MakePiece(" small ", 7), 9);
-    PrintS(tree, buffer2, &start);
-    printf(buffer2);
-
-    struct Tree *test2 = NULL;
-    char buffer3[200];
-    start = 0;
-    char a[] = {'h', 'l', 'o'};
-    char b[] = {'e', 'l'};
-    for (int i=0; i<3; i++)
-        test2 = Insert(test2, MakePiece(&a[i], 1), i);
-    test2 = Insert(test2, MakePiece(&b[0], 1), 1);
-    test2 = Insert(test2, MakePiece(&b[1], 1), 2);
-    PrintS(test2, buffer3, &start);
-    printf(buffer3);
-    return 0;*/
 }
