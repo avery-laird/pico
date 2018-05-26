@@ -4,25 +4,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
-#include "ValidateTree.h"
-#include "types.h"
+#include "PieceTable.h"
 
-#define DEBUG
+//#define DEBUG
 #define MSG_LEN 250
 #define LOG_TARGET stdout
-
-/*
- * No matter how we store the data, we must redraw the visible buffer
- * each time a change is made. This is unavoidable. So the key is to
- * make those redrawings as fast as possible.
- *
- * 1. Insert node
- * 2. Splay up node
- *
- * TODO: bug when inserting one character piece at the same place as another piece. Example: 0, 1, 2, 3, insert @ 0
- *
- *
- */
 
 
 Logger *InitLogger() {
@@ -99,12 +85,8 @@ void ClearLog(Logger *L) {
 }
 
 
-static Logger *L;
+extern Logger *L;
 
-struct Queue {
-    int front, back, capacity, size;
-    struct Tree **tree;
-};
 
 struct Queue *MakeQueue(int capacity) {
     struct Queue *q = malloc(sizeof(struct Queue));
@@ -152,15 +134,17 @@ void PrintTree(struct Tree *t) {
         tmp = dequeue(q);
         if (tmp == last) printf("\n");
 
-        printf("(%ld, %ld, %ld, %ld) ", tmp->piece->start, tmp->piece->length, tmp->size_left, tmp->size_right);
+        printf("(%c, %ld, %ld, %ld) ", tmp->piece->start, tmp->piece->length, tmp->size_left, tmp->size_right);
         if (tmp->left != NULL) enqueue(q, tmp->left); last = tmp->left;
         if (tmp->right != NULL) enqueue(q, tmp->right); last = tmp->right;
     }
 }
 
-struct Piece *MakePiece(unsigned long int start, unsigned long int length) {
+struct Piece *MakePiece(char *start, unsigned long int length) {
     struct Piece *NewPiece = malloc(sizeof(NewPiece));
-    NewPiece->start = start;
+    NewPiece->start = malloc(sizeof(char)*(length + 1));
+    strncpy(NewPiece->start, start, length);
+    NewPiece->start[length] = '\0';
     NewPiece->length = length;
     return NewPiece;
 }
@@ -200,8 +184,10 @@ unsigned long int node_offset(struct Tree *node) {
     if (node == NULL)
         return 0;
     else
-        return node->size_left + node->piece->length;
+        return node->size_left;
+        /*return node->size_left + node->piece->length;*/
 }
+
 
 struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *piece, unsigned long int index) {
     /* interative BST insert, which also returns the address to the newly inserted node,
@@ -213,6 +199,7 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
      */
 
     unsigned long int offset = 0;
+    unsigned long int root_offset = 0;
 
     struct Tree *nodeptr = tree;
     if (nodeptr == NULL) {
@@ -220,13 +207,29 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
         *inserted = tree;
         return tree;
     } else { /* iterate down the tree */
-        offset += tree->size_left + tree->piece->length;
+        /* we only want to add initial offset if we are inserting before existing chars */
+        offset += node_offset(tree);
         while (1) {
-            if (index <= offset) { /* if index is equal, we make it left child, because it prepends the existing piece */
+            if (index == offset) {
+                /* make new piece to be left child of nodeptr */
+                struct Tree *tmp = nodeptr->left;
+                nodeptr->left = MakeNode(piece);
+                nodeptr->left->parent = nodeptr;
+                *inserted = nodeptr->left;
+
+                /* update the node we moved (size->left & size->right shouldn't change)*/
+                nodeptr->left->left = tmp;
+                nodeptr->left->size_left = node_size(tmp);
+                nodeptr->size_left = node_size(nodeptr->left);
+                if (tmp != NULL) tmp->parent = nodeptr;
+
+                return tree;
+            }
+            else if (index < offset) { /* if index is equal, we make it left child, because it prepends the existing piece */
                 if (nodeptr->left != NULL) {
                     nodeptr = nodeptr->left;
                     /* if we're going into the left branch, offset is NOT additive */
-                    offset = node_offset(nodeptr);
+                    offset = node_offset(nodeptr) + root_offset;
                     /* update offset only if child is not null */
                 }
                 else {
@@ -261,7 +264,7 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
                                                                       total_length - last_half_length));
 
                         /* update last-half start index */
-                        nodeptr->piece->start = first_half->piece->start + first_half->piece->length + 1;
+                        nodeptr->piece->start += first_half->piece->length + 1;
                         nodeptr->left->left = first_half;
                         first_half->parent = nodeptr->left;
 
@@ -282,11 +285,16 @@ struct Tree *BSTInsert(struct Tree *tree, struct Tree **inserted, struct Piece *
                     }
                 }
             }
-            if (index > offset) {
+            else if (index > offset) {
                 if (nodeptr->right != NULL) {
+                    offset += nodeptr->piece->length;
+                    /* if we are going into the right subtree from the root,
+                     * set the root offset */
+                    if (nodeptr == tree) root_offset = offset;
+
                     nodeptr = nodeptr->right;
-                    /* if we're going into the right subtree, offsets ARE additive */
                     offset += node_offset(nodeptr);
+                    /* if we're going into the right subtree, offsets ARE additive */
                     /* update offset only if child is not null */
                 }
                 else {
@@ -690,7 +698,7 @@ void RecursiveInorder(struct Tree *tree, unsigned long int *offset) {
     if (tree == NULL)
         return;
     RecursiveInorder(tree->left, offset);
-    printf("%ld\t\t%ld\t\t%ld\n", *offset, tree->piece->length, tree->piece->start);
+    printf("%ld\t\t%ld\t\t%c\n", *offset, tree->piece->length, *tree->piece->start);
     *offset += tree->piece->length;
     RecursiveInorder(tree->right, offset);
 }
@@ -701,70 +709,29 @@ void TraverseInorder(struct Tree *tree) {
     printf("%ld\n", offset);
 }
 
-int main() {
-    L = InitLogger();
+void PrintInorder(struct Tree *tree, FILE *p) {
+    if  (tree == NULL) return;
+    PrintInorder(tree->left, p);
+    fprintf(p, "%.*s", (int)tree->piece->length, tree->piece->start);
+    PrintInorder(tree->right, p);
+}
 
-    printf("offset\tlength\tstart\n");
-
-    struct Tree *test = NULL;
-
-    test = Insert(test, MakePiece(0, 13), 0); /* string of length 13 @ index=0 */
-    test = Insert(test, MakePiece(0, 1), 10); /* string of length 1 @ index=10 */
-    test = Insert(test, MakePiece(0, 3), 5);  /* string of length 3 @ index=5 */
-
-    printf("TEST\n");
-    TraverseInorder(test);
-
-    printf("PREPEND\n");
-    struct Tree *prepend = NULL;
-    prepend = Insert(prepend, MakePiece(0, 5), 0);
-    prepend = Insert(prepend, MakePiece(0, 4), 0);
-    TraverseInorder(prepend);
-
-    printf("APPEND\n");
-    struct Tree *append = NULL;
-    append = Insert(append, MakePiece(0, 5), 0);
-    append = Insert(append, MakePiece(0, 4), 6);
-    TraverseInorder(append);
-
-    printf("SPLIT - insert right\n");
-    struct Tree *split_right = NULL;
-    split_right = Insert(split_right, MakePiece(0, 5), 0);
-    split_right = Insert(split_right, MakePiece(0, 4), 3);
-    TraverseInorder(split_right);
-
-    printf("SPLIT - insert left\n");
-    struct Tree *split_left = NULL;
-    split_left = Insert(split_left, MakePiece(0, 5), 0);
-    split_left = Insert(split_left, MakePiece(0, 4), 3);
-    TraverseInorder(split_left);
-
-    struct Tree *profile = NULL;
-    clock_t start, end;
-    double total = 0, diff;
-
-    unsigned long int target;
-
-    srand(time(NULL));
-
-    unsigned long test1[] = {0, 1, 2, 3, 0, 1, 2, 3, 1, 2, 2};
-    unsigned long current_max = 0;
-
-#define RANGE 700
-    for (unsigned long int i=0; i<RANGE; i++) {
-
-        target = (unsigned long) (rand() % (current_max - 0 + 1));
-
-        printf("insert @ %ld\n", target);
-        start = clock();
-        profile = Insert(profile, MakePiece(0, 1), target);
-        end = clock();
-
-        current_max = target + 1 > current_max ? target + 1 : current_max;
-        diff = ((double)(end-start))/CLOCKS_PER_SEC;
-        total += diff;
+void FreeTree(struct Tree *tree) {
+    if (tree == NULL) return;
+    if (tree->right == NULL) {
+        free(tree->right);
+        tree->right = NULL;
+        return;
+    } else if (tree->left == NULL) {
+        free(tree->left);
+        tree->left = NULL;
+        return;
     }
+    FreeTree(tree->left);
+    FreeTree(tree->right);
+}
 
-    printf("%f\n", total/RANGE);
-    return 0;
+
+void print_to_file(double x, double y, FILE *p) {
+    fprintf(p, "%lf %.10lf\n", x, y);
 }
